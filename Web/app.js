@@ -65,6 +65,7 @@ function setProgress(received, total) {
 function hideLauncher() {
 	$('launcher').style.display = 'none';
 	$('game').style.display = 'block';
+	document.body.classList.add('playing');
 }
 
 function humanSize(bytes) {
@@ -231,9 +232,176 @@ function boot(isoPath) {
 	mod.callMain([
 		isoPath,
 		'--memstick=/memstick',
-		'--fullscreen',
 	]);
 	setStatus('Berjalan. Klik kanvas untuk input keyboard/gamepad; Esc untuk menu.');
+}
+
+async function startMenu() {
+	if (booted) return;
+	booted = true;
+	try {
+		setStatus('Membuka menu PPSSPP...');
+		const mod = await initRuntime();
+		hideLauncher();
+		mod.callMain(['--memstick=/memstick']);
+		setStatus('Menu PPSSPP. Settings → Controls → Control Mapping untuk mengatur gamepad.');
+	} catch (err) {
+		booted = false;
+		setStatus('Gagal: ' + err.message);
+		console.error(err);
+	}
+}
+
+function sendEscape() {
+	// SDL3's emscripten backend listens for keydown/keyup on the window.
+	const init = { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true };
+	window.dispatchEvent(new KeyboardEvent('keydown', init));
+	window.dispatchEvent(new KeyboardEvent('keyup', init));
+}
+
+function resizeAfterFullscreen() {
+	// Fullscreen changes the canvas CSS size; let SDL/PPSSPP recalculate its
+	// window/viewport from the new layout before the next frame.
+	setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+	$('canvas').focus();
+}
+
+function updateFullscreenButton() {
+	const btn = $('fsBtn');
+	if (!btn) return;
+	const active = !!document.fullscreenElement || $('game').classList.contains('pseudo-fullscreen');
+	btn.textContent = active ? 'Keluar Fullscreen' : 'Fullscreen';
+}
+
+function setPseudoFullscreen(on) {
+	$('game').classList.toggle('pseudo-fullscreen', on);
+	updateFullscreenButton();
+	resizeAfterFullscreen();
+}
+
+function toggleFullscreen() {
+	const el = $('game');
+	if (document.fullscreenElement) {
+		if (document.exitFullscreen) {
+			document.exitFullscreen().then(resizeAfterFullscreen).catch((err) => console.warn('Exit fullscreen failed', err));
+		}
+		return;
+	}
+	if (el.classList.contains('pseudo-fullscreen')) {
+		setPseudoFullscreen(false);
+		return;
+	}
+	if (el.requestFullscreen) {
+		el.requestFullscreen().then(() => {
+			updateFullscreenButton();
+			resizeAfterFullscreen();
+		}).catch((err) => {
+			// Safari/iOS and embedded webviews often reject element fullscreen.
+			// Fill the page instead so the game is still usable.
+			console.warn('Fullscreen API failed; using page fullscreen', err);
+			setPseudoFullscreen(true);
+		});
+	} else {
+		setPseudoFullscreen(true);
+	}
+}
+
+function updatePadStatus() {
+	const el = $('padStatus');
+	if (!el) return;
+	const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+	if (pads.length) {
+		el.textContent = 'Gamepad: ' + pads.map((pad) => pad.id).join(' | ');
+		el.style.color = '#7ee787';
+	} else {
+		el.textContent = 'Gamepad: belum terdeteksi - tekan tombol pada gamepad';
+		el.style.color = '';
+	}
+}
+
+const SETTINGS_FORMAT = 'ppsspp-web-settings';
+
+async function ensureRuntimeFS() {
+	if (window.FS) return window.FS;
+	setStatus('Menyiapkan emulator...');
+	await initRuntime();
+	return window.FS;
+}
+
+function readFsText(fs, path) {
+	try {
+		return fs.readFile(path, { encoding: 'utf8' });
+	} catch (err) {
+		return null;
+	}
+}
+
+async function exportSettings() {
+	try {
+		const hadRuntime = !!window.FS;
+		const fs = await ensureRuntimeFS();
+		if (!hadRuntime) {
+			// Loading the emulator can outlast the browser's transient user
+			// activation, which makes the download silently blocked. Ask for a
+			// second click now that FS is ready.
+			setStatus('Emulator siap. Klik "Ekspor pengaturan" sekali lagi.');
+			return;
+		}
+		const ppssppIni = readFsText(fs, '/memstick/PSP/SYSTEM/ppsspp.ini');
+		const controlsIni = readFsText(fs, '/memstick/PSP/SYSTEM/controls.ini');
+		if (!ppssppIni && !controlsIni) {
+			setStatus('Belum ada file pengaturan untuk diekspor.');
+			return;
+		}
+		const data = { format: SETTINGS_FORMAT, version: 1, ppssppIni, controlsIni };
+		const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = 'ppsspp-web-settings.json';
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 2000);
+		setStatus('Pengaturan diekspor ke ppsspp-web-settings.json.');
+	} catch (err) {
+		setStatus('Gagal ekspor: ' + err.message);
+		console.error(err);
+	}
+}
+
+function importSettings(file) {
+	const reader = new FileReader();
+	reader.onload = async () => {
+		try {
+			const data = JSON.parse(String(reader.result));
+			if (data.format !== SETTINGS_FORMAT) {
+				throw new Error('File bukan ekspor pengaturan PPSSPP Web');
+			}
+			if (data.ppssppIni != null && typeof data.ppssppIni !== 'string') throw new Error('ppssppIni tidak valid');
+			if (data.controlsIni != null && typeof data.controlsIni !== 'string') throw new Error('controlsIni tidak valid');
+			const fs = await ensureRuntimeFS();
+			fs.mkdirTree('/memstick/PSP/SYSTEM');
+			let count = 0;
+			if (typeof data.ppssppIni === 'string') {
+				fs.writeFile('/memstick/PSP/SYSTEM/ppsspp.ini', data.ppssppIni);
+				count++;
+			}
+			if (typeof data.controlsIni === 'string') {
+				fs.writeFile('/memstick/PSP/SYSTEM/controls.ini', data.controlsIni);
+				count++;
+			}
+			if (!count) throw new Error('File tidak berisi pengaturan');
+			await new Promise((resolve, reject) => fs.syncfs(false, (err) => (err ? reject(err) : resolve())));
+			setStatus('Pengaturan diimpor. Memuat ulang halaman...');
+			setTimeout(() => location.reload(), 900);
+		} catch (err) {
+			setStatus('Gagal impor: ' + err.message);
+			console.error(err);
+		}
+	};
+	reader.onerror = () => setStatus('Gagal membaca file.');
+	reader.readAsText(file);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +441,26 @@ $('fileInput').addEventListener('change', (e) => {
 });
 
 window.addEventListener('DOMContentLoaded', () => {
+	$('menuOnlyBtn').addEventListener('click', startMenu);
+	$('exportSettingsBtn').addEventListener('click', exportSettings);
+	$('importSettingsBtn').addEventListener('click', () => $('settingsInput').click());
+	$('settingsInput').addEventListener('change', (e) => {
+		if (e.target.files.length) importSettings(e.target.files[0]);
+		e.target.value = '';
+	});
+	$('menuBtn').addEventListener('click', sendEscape);
+	$('fsBtn').addEventListener('click', toggleFullscreen);
+	$('canvas').addEventListener('click', () => $('canvas').focus());
+	window.addEventListener('gamepadconnected', updatePadStatus);
+	window.addEventListener('gamepaddisconnected', updatePadStatus);
+	document.addEventListener('fullscreenchange', () => {
+		updateFullscreenButton();
+		resizeAfterFullscreen();
+	});
+	setInterval(updatePadStatus, 2000);
+	updatePadStatus();
+	updateFullscreenButton();
+
 	if (!webgl2Available()) {
 		$('webglWarn').style.display = 'block';
 	}
@@ -290,13 +478,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	loadGameList();
 	setStatus('Pilih game untuk mulai.');
 	// Smoke-test hook: /?boot=menu boots straight into PPSSPP's own menu, no game.
-	if (new URLSearchParams(location.search).has('boot')) {
-		initRuntime()
-			.then((mod) => {
-				hideLauncher();
-				mod.callMain(['--memstick=/memstick']);
-				setStatus('Menjalankan menu PPSSPP (mode uji).');
-			})
-			.catch((e) => setStatus('Gagal boot: ' + e.message));
+	if (params.has('boot')) {
+		startMenu();
 	}
 });

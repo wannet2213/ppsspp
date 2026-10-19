@@ -57,14 +57,59 @@ file lokal -> ISO diunduh langsung ke MEMFS sambil berjalan -> emulator boot
 ke game. Save game dan `ppsspp.ini` persisten lewat IDBFS (IndexedDB). Server
 hanya mengirim file; emulasi, rendering, audio, dan save semuanya di klien.
 
+## Gamepad
+
+- Sambungkan pad, lalu tekan salah satu tombolnya setelah halaman terbuka.
+  Chrome/Edge baru mengekspos Gamepad API setelah ada input; status di bar
+  game akan berubah dari "belum terdeteksi" menjadi ID pad.
+- Remap kontrol: tombol **Menu (Esc)** saat game berjalan, atau tombol
+  **Buka menu PPSSPP** di launcher, lalu masuk ke
+  **Settings → Controls → Control Mapping**. Mapping disimpan di
+  `controls.ini` pada memstick dan ikut tersinkron ke IndexedDB.
+- Semua pad diperlakukan sebagai pad 0, jadi beberapa controller sekaligus
+  tidak dipisah per pemain.
+- Kalau status tetap "belum terdeteksi": pastikan pad terhubung di OS, tekan
+  tombolnya lagi, atau reconnect. Dukungan Gamepad API di Safari/iOS terbatas;
+  Chrome/Edge di Android dan desktop direkomendasikan.
+
+### Ekspor/impor pengaturan
+
+Panel **Pengaturan gamepad** di launcher punya tombol **Ekspor pengaturan** dan
+**Impor pengaturan**. Ekspor menyimpan `ppsspp.ini` + `controls.ini` ke satu
+file JSON; impor menuliskannya kembali ke `/memstick/PSP/SYSTEM` dan memuat
+ulang halaman. Ini berguna kalau menu Settings di satu browser bermasalah:
+atur di Firefox, ekspor, lalu impor di Chrome. File juga bisa dipakai sebagai
+backup setting.
+
+Kalau emulator belum pernah dijalankan di halaman itu, klik ekspor yang
+pertama akan menyiapkan runtime dan meminta klik sekali lagi; click kedua
+langsung mengunduh file.
+
+## Fullscreen
+
+Tombol **Fullscreen** di bar game memakai Fullscreen API pada elemen `#game`
+(canvas + bar kontrol). Canvas mengikuti ukuran layar dan event resize dikirim
+ke SDL supaya PPSSPP menyesuaikan viewport/backing store.
+
+Kalau browser menolak Fullscreen API (Safari/iOS, webview, atau kebijakan
+browser), tombol yang sama otomatis memakai **pseudo-fullscreen**: `#game`
+diposisikan fixed memenuhi viewport dan tombol berubah menjadi
+**Keluar Fullscreen**. Jadi game tetap bisa memenuhi layar meski API browser
+tidak tersedia.
+
+PPSSPP sengaja **tidak** dijalankan dengan `--fullscreen` di web: flag itu
+membuat SDL meminta fullscreen pada canvas saja, sehingga bar Menu/Fullscreen
+keluar dari elemen fullscreen dan layout bisa kembali hitam setelah pause
+menu. Kalau butuh fullscreen, gunakan tombol di halaman.
+
 ## Catatan teknis
 
 - `SDL/SDLMain.cpp` mempunyai jalur `__EMSCRIPTEN__`: browser main thread
   tetap menjadi render thread (WebGL context hanya bisa dipakai dari situ);
   tiap callback `requestAnimationFrame` memompa input SDL lalu menarik
-  antrean GL hanya bila ada kerjaan (`ThreadFramePending()`, pola yang sama
-  seperti frontend libretro - `ThreadFrame()` kosong memblokir memakai futex
-  yang membekukan event loop browser). Emulasi berjalan di worker pthread
+  antrean GL tanpa memblokir (`ThreadFrameNonBlocking()`; `ThreadFrame()`
+  kosong memblokir memakai futex yang membekukan event loop browser). Emulasi
+  berjalan di worker pthread
   lewat `EmuThread_Start`.
 - `<canvas id="canvas">` wajib: driver video SDL3 Emscripten mencari kanvas
   lewat properti `SDL_PROP_WINDOW_CREATE_EMSCRIPTEN_CANVAS_ID_STRING` yang

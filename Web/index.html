@@ -71,6 +71,18 @@
 	#status { min-height: 18px; color: var(--dim); font-size: 12px; }
 
 	#game { display: none; text-align: center; }
+	#gameBar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		max-width: 1024px;
+		margin: 0 auto 8px;
+		pointer-events: none;
+	}
+	#gameBar button { padding: 5px 12px; font-size: 12px; pointer-events: auto; }
+	.buttonRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+	#padStatus { color: var(--dim); font-size: 12px; }
 	#canvas {
 		width: 100%;
 		max-width: 1024px;
@@ -79,6 +91,58 @@
 		border: 1px solid var(--line);
 		border-radius: 8px;
 		touch-action: none;
+	}
+	#game:fullscreen, #game:-webkit-full-screen,
+	#game.pseudo-fullscreen {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #000;
+	}
+	#game.pseudo-fullscreen {
+		position: fixed;
+		inset: 0;
+		z-index: 9999;
+	}
+	#game:fullscreen #canvas, #game:-webkit-full-screen #canvas,
+	#game.pseudo-fullscreen #canvas {
+		width: 100vw;
+		height: 100vh;
+		max-width: none;
+		aspect-ratio: auto;
+		border: none;
+		border-radius: 0;
+	}
+	/* Let the game use the whole window even before going fullscreen. */
+	body.playing main { max-width: none; }
+	body.playing #game { max-width: none; }
+	body.playing #canvas { max-width: 100%; }
+	/* SDL can still request fullscreen on the canvas itself if a game setting
+	   asks for it; make sure it fills the screen there too. */
+	#canvas:fullscreen, #canvas:-webkit-full-screen {
+		width: 100vw;
+		height: 100vh;
+		max-width: none;
+		aspect-ratio: auto;
+		border: none;
+		border-radius: 0;
+		background: #000;
+	}
+	#game:fullscreen #gameBar, #game:-webkit-full-screen #gameBar,
+	#game.pseudo-fullscreen #gameBar {
+		position: fixed;
+		top: 8px;
+		left: 8px;
+		z-index: 10;
+		margin: 0;
+		padding: 4px 6px;
+		background: rgba(0, 0, 0, 0.78);
+		border-radius: 6px;
+		pointer-events: none;
+	}
+	#game:fullscreen #padStatus, #game:-webkit-full-screen #padStatus,
+	#game.pseudo-fullscreen #padStatus {
+		color: var(--text);
 	}
 	#webglWarn {
 		display: none;
@@ -106,6 +170,17 @@
 			<div class="hint">Renderer: WebGL2. PPSSPP upstream belum memiliki backend WebGPU.</div>
 		</div>
 		<div class="panel">
+			<h2>Pengaturan gamepad</h2>
+			<div class="buttonRow">
+				<button id="menuOnlyBtn">Buka menu PPSSPP</button>
+				<button id="exportSettingsBtn">Ekspor pengaturan</button>
+				<button id="importSettingsBtn">Impor pengaturan</button>
+			</div>
+			<input type="file" id="settingsInput" accept=".json,application/json" hidden>
+			<div class="hint">Tekan tombol pada gamepad setelah halaman terbuka, lalu buka menu ini: Settings → Controls → Control Mapping. Pengaturan disimpan di browser (IDBFS).</div>
+			<div class="hint">Ekspor menyimpan <code>ppsspp.ini</code> + <code>controls.ini</code> ke file JSON. Impor memasukkannya lagi, berguna untuk memindahkan setting dari Firefox ke Chrome.</div>
+		</div>
+		<div class="panel">
 			<h2>Atau pilih file dari perangkat</h2>
 			<input type="file" id="fileInput" accept=".iso,.cso,.pbp,.chd,.elf">
 			<div class="hint">File dimuat ke memori browser, tidak dikirim ke mana pun.</div>
@@ -118,9 +193,14 @@
 	</section>
 
 	<section id="game">
+		<div id="gameBar">
+			<button id="menuBtn">Menu (Esc)</button>
+			<button id="fsBtn">Fullscreen</button>
+			<span id="padStatus">Gamepad: belum terdeteksi - tekan tombol pada gamepad</span>
+		</div>
 		<div id="webglWarn">Browser ini tidak mendukung WebGL2. PPSSPP Web butuh WebGL2 untuk merender.</div>
 		<!-- id="canvas" is what SDL3's emscripten video driver looks up by default. -->
-		<canvas id="canvas" width="960" height="544"></canvas>
+		<canvas id="canvas" width="960" height="544" tabindex="0"></canvas>
 	</section>
 </main>
 
