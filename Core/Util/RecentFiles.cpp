@@ -30,6 +30,12 @@ RecentFilesManager::~RecentFilesManager() {
 }
 
 void RecentFilesManager::EnsureThread() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Single-threaded web build: no background thread. Recent-file updates are
+	// pushed into the command queue but not processed; games boot through the
+	// web shell anyway, so the list stays empty.
+	return;
+#endif
 	if (thread_.joinable()) {
 		return;
 	}

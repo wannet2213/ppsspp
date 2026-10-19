@@ -6,7 +6,11 @@
 #include "ppsspp_config.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_mouse.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "SDL/SDLJoystick.h"
+#include "SDL/SDLGLGraphicsContext.h"
 SDLJoystick *joystick = NULL;
 
 #if PPSSPP_PLATFORM(RPI)
@@ -1327,7 +1331,12 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return false;
 #endif
 	case SYSPROP_CAN_JIT:
+#ifdef __EMSCRIPTEN__
+		// No executable memory in wasm - the IR interpreter runs the PSP CPU.
+		return false;
+#else
 		return true;
+#endif
 	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
 		return true;  // FileUtil.cpp: OpenFileInEditor
 #ifndef HTTPS_NOT_AVAILABLE
@@ -1907,6 +1916,68 @@ void UpdateSDLCursor() {
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+// Web main loop: the browser main thread owns the GL context, so it keeps
+// rendering - the rAF callback pumps input and pulls queued GL work only when
+// there is some (ThreadFrame() blocks on an empty queue, which on the browser
+// main thread means a busy futex wait that freezes the event loop).
+// With pthreads, emulation runs on the EmuThread_Start worker; without
+// (no SharedArrayBuffer), it runs inline in this same callback.
+static SDL_Window *g_webWindow = nullptr;
+static GraphicsContext *g_webGraphicsContext = nullptr;
+static InputStateTracker *g_webInputTracker = nullptr;
+static NativeApplication *g_webApplication = nullptr;
+
+static void WebFrameCallback(void *) {
+	SDL_Event event;
+	while (SDL_PollEvent(&event)) {
+		ProcessSDLEvent(g_webWindow, event, g_webInputTracker);
+		if (g_QuitRequested || g_RestartRequested)
+			break;
+	}
+
+	if (g_QuitRequested || g_RestartRequested) {
+		// Drain whatever the emu side still has queued, then stop the loop.
+		while (static_cast<SDLGLGraphicsContext *>(g_webGraphicsContext)->ThreadFramePending()) {
+			if (!static_cast<SDLGLGraphicsContext *>(g_webGraphicsContext)->ThreadFrameNonBlocking()) {
+				break;
+			}
+		}
+		g_webApplication->ShutdownGraphics(g_webGraphicsContext);
+		delete g_webApplication;
+		g_webApplication = nullptr;
+		INFO_LOG(Log::System, "Web main loop stopping.");
+		emscripten_cancel_main_loop();
+		return;
+	}
+
+	UpdateTextFocus(g_webWindow);
+	UpdateSDLCursor();
+	g_webInputTracker->MouseCaptureControl(g_webWindow);
+
+	{
+		std::lock_guard<std::mutex> guard(g_mutexWindow);
+		if (g_windowState.update) {
+			UpdateWindowState(g_webWindow);
+		}
+	}
+
+#ifndef __EMSCRIPTEN_PTHREADS__
+	// Single-threaded build: drain queued GL work from the previous frame FIRST
+	// (NativeFrame can block on in-flight frames), then run emulation and render
+	// submission right here, and drain again so the present reaches the screen.
+	static_cast<SDLGLGraphicsContext *>(g_webGraphicsContext)->ThreadFrameNonBlocking();
+	NativeFrame(g_webGraphicsContext);
+	static_cast<SDLGLGraphicsContext *>(g_webGraphicsContext)->ThreadFrameNonBlocking();
+#else
+	// With pthreads the emulation worker submits frames. Pull whatever is queued
+	// without waiting: a blocking ThreadFrame() here freezes the browser event
+	// loop whenever the emu thread is between submissions (game boot, ISO load).
+	static_cast<SDLGLGraphicsContext *>(g_webGraphicsContext)->ThreadFrameNonBlocking();
+#endif
+}
+#endif
+
 #ifdef _WIN32
 #undef main
 #endif
@@ -1965,12 +2036,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	bool vulkanMayBeAvailable = false;
+#ifndef __EMSCRIPTEN__
 	if (VulkanMayBeAvailable()) {
 		fprintf(stderr, "DEBUG: Vulkan might be available.\n");
 		vulkanMayBeAvailable = true;
 	} else {
 		fprintf(stderr, "DEBUG: Vulkan is not available, not using Vulkan.\n");
 	}
+#endif
 
 	const int compiled = SDL_VERSION;
 	const int linked = SDL_GetVersion();
@@ -2040,6 +2113,14 @@ int main(int argc, char *argv[]) {
 	g_DesktopWidth = displayMode->w;
 	g_DesktopHeight = displayMode->h;
 	g_RefreshRate = displayMode->refresh_rate;
+#ifdef __EMSCRIPTEN__
+	// The emscripten SDL video driver reports no refresh rate. NativeFrame's
+	// fallback throttle divides by it, and a zero turns into an effectively
+	// infinite sleep on the emu thread (the first frame presents, then stops).
+	if (g_RefreshRate <= 0.0f) {
+		g_RefreshRate = 60.0f;
+	}
+#endif
 	SDL_free(displayIDs);
 
 	// TODO: Should only call this if we actually intend to use OpenGL.
@@ -2329,7 +2410,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-#if !PPSSPP_PLATFORM(MAC)
+#if !PPSSPP_PLATFORM(MAC) && !defined(__EMSCRIPTEN__)
 	// linux SDL_GetPowerInfo asks upower on dbus for power information by default, can cause DrawFPS() in DebugOverlay.cpp to block and affect frame pacing
 	bool stop_battery_poll_thread = false;
 	double last_battery_poll = 0;
@@ -2357,6 +2438,45 @@ int main(int argc, char *argv[]) {
 #endif
 
 	const bool needsSeparateEmuThread = graphicsContext->NeedsSeparateEmuThread();
+#ifdef __EMSCRIPTEN__
+#ifndef __EMSCRIPTEN_PTHREADS__
+	// Single-threaded web build (no SharedArrayBuffer): run everything on the
+	// browser main thread - InitGraphics, then one frame per rAF callback.
+	graphicsContext->ThreadStart();
+	g_webApplication = new NativeApplication();
+	if (!g_webApplication->InitGraphics(graphicsContext)) {
+		fprintf(stderr, "Failed to initialize graphics\n");
+		return 1;
+	}
+	g_webWindow = window;
+	g_webGraphicsContext = graphicsContext;
+	g_webInputTracker = &inputTracker;
+	emscripten_set_main_loop_arg(WebFrameCallback, nullptr, 0, 1);
+	return 0;
+#else
+	// WebGL contexts are bound to the browser main thread, so the same thread keeps
+	// rendering: each rAF callback pulls queued GL work while emulation runs on the
+	// worker EmuThread_Start spawns. Never needsSeparateEmuThread()==false here
+	// (that is the Vulkan path), but if it ever were, RunMainLoop semantics would
+	// belong on this thread instead.
+	std::thread emuThread = EmuThread_Start(graphicsContext, new NativeApplication(), [&](GraphicsContext *graphicsContext) {
+		NativeFrame(graphicsContext);
+		bool keepRunning = !(g_QuitRequested || g_RestartRequested);
+		if (!keepRunning) {
+			INFO_LOG(Log::System, "EmuThread was requested to exit normally.");
+		}
+		return keepRunning;
+	});
+
+	g_webWindow = window;
+	g_webGraphicsContext = graphicsContext;
+	g_webInputTracker = &inputTracker;
+	// simulate_infinite_loop=1 unwinds main() with the 'unwind' control-flow
+	// exception, which callMain handles to keep the runtime alive.
+	emscripten_set_main_loop_arg(WebFrameCallback, nullptr, 0, 1);
+	return 0;
+#endif
+#else
 	if (!needsSeparateEmuThread) {
 		// Vulkan mode uses this.
 
@@ -2450,8 +2570,9 @@ int main(int argc, char *argv[]) {
 		INFO_LOG(Log::System, "Requesting render thread exit...");
 		EmuThread_Join(graphicsContext, emuThread);
 	}
+#endif // __EMSCRIPTEN__
 
-#if !PPSSPP_PLATFORM(MAC)
+#if !PPSSPP_PLATFORM(MAC) && !defined(__EMSCRIPTEN__)
 	stop_battery_poll_thread = true;
 	SDL_SignalSemaphore(battery_poll_thread_sema);
 	battery_poll_thread.join();

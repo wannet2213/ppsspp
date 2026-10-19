@@ -36,7 +36,11 @@
 
 #include "zlib.h"
 
+#ifndef __EMSCRIPTEN__
+// Nothing from armips is used here, but the include is on every other platform's
+// path, so keep it except on wasm where armips does not build.
 #include "ext/armips/Core/Assembler.h"
+#endif
 
 #include "Common/CommonTypes.h"
 #include "Common/Log.h"
@@ -1455,6 +1459,7 @@ bool SymbolMap::RemoveData(u32 startAddress, bool removeName) {
 }
 
 // Transforms the labels to lowercase when returning. Why?
+#ifndef __EMSCRIPTEN__
 void SymbolMap::GetLabels(std::vector<LabelDefinition> &dest) {
 	if (activeNeedUpdate_)
 		UpdateActiveSymbols();
@@ -1468,6 +1473,7 @@ void SymbolMap::GetLabels(std::vector<LabelDefinition> &dest) {
 		dest.push_back(entry);
 	}
 }
+#endif
 
 #if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 

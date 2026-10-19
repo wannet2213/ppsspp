@@ -206,7 +206,18 @@ void ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {
 	if (IsInitialized()) {
 		Teardown();
 	}
-	
+
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Single-threaded web build (no SharedArrayBuffer available): no worker
+	// threads at all. Tasks run inline on the calling thread (see EnqueueTask),
+	// but one virtual looper thread is reported so ParallelLoop's range math
+	// doesn't divide by zero.
+	numComputeThreads_ = 1;
+	numThreads_ = 1;
+	INFO_LOG(Log::System, "ThreadManager::Init(single-threaded web build)");
+	return;
+#endif
+
 	numComputeThreads_ = numRealCores * numLogicalCoresPerCpu;
 	// Double it for the IO blocking threads.
 	int numThreads = numComputeThreads_ + std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_);
@@ -225,6 +236,13 @@ void ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {
 }
 
 void ThreadManager::EnqueueTask(Task *task) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Single-threaded web build - run the task right away. Callers only poll
+	// tasks for completion afterwards, so synchronous execution is equivalent.
+	task->Run();
+	task->Release();
+	return;
+#endif
 	if (task->Type() == TaskType::DEDICATED_THREAD) {
 		std::thread th([=](Task *task) {
 			SetCurrentThreadName("DedicatedThreadTask");
@@ -291,6 +309,13 @@ void ThreadManager::EnqueueTask(Task *task) {
 }
 
 void ThreadManager::EnqueueTaskOnThread(int threadNum, Task *task) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Single-threaded web build - run the task right away so waitable
+	// counters complete before the caller checks them.
+	task->Run();
+	task->Release();
+	return;
+#endif
 	_assert_msg_(task->Type() != TaskType::DEDICATED_THREAD, "Dedicated thread tasks can't be put on specific threads");
 
 	_assert_msg_(threadNum >= 0 && threadNum < (int)global_->threads_.size(), "Bad threadnum %d(/%d) or not initialized", threadNum, (int)global_->threads_.size());

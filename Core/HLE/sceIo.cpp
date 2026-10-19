@@ -669,10 +669,16 @@ void __IoInit() {
 
 	memset(fds, 0, sizeof(fds));
 
+#ifdef __EMSCRIPTEN_ST__
+	// No pthreads in this build: run async IO events inline as they are queued.
+	ioManagerThreadEnabled = false;
+	ioManager.SetThreadEnabled(false);
+#else
 	ioManagerThreadEnabled = true;
 	ioManager.SetThreadEnabled(true);
-	Core_ListenLifecycle(&__IoWakeManager);
 	ioManagerThread = std::thread(&__IoManagerThread);
+#endif
+	Core_ListenLifecycle(&__IoWakeManager);
 
 	__KernelRegisterWaitTypeFuncs(WAITTYPE_ASYNCIO, __IoAsyncBeginCallback, __IoAsyncEndCallback);
 

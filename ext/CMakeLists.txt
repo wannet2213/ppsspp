@@ -4,7 +4,11 @@ if(WIN32)
 	set(ARMIPS_USE_STD_FILESYSTEM ON CACHE BOOL "" FORCE)
 endif()
 
-add_subdirectory(armips)
+if(NOT EMSCRIPTEN)
+	# ghc::filesystem inside armips has no wasm support; the assembler it provides is
+	# stubbed out in the web build (see Core/MIPS/MIPSAsm.cpp).
+	add_subdirectory(armips)
+endif()
 
 if(NOT USING_GLES2 AND NOT NO_OPENGL)
 	add_subdirectory(glew)
@@ -65,7 +69,7 @@ if(WIN32)
 	)
 endif()
 
-if(LINUX OR ANDROID OR MACOSX OR IOS OR BSD)
+if(LINUX OR ANDROID OR MACOSX OR IOS OR BSD OR EMSCRIPTEN)
 	list(APPEND aemu_postoffice_client_obj
 		aemu_postoffice/client/sock_impl_linux.c
 	)
@@ -74,6 +78,11 @@ endif()
 add_library(aemu_postoffice_client STATIC
 	${aemu_postoffice_client_obj}
 )
+
+if(EMSCRIPTEN)
+	# musl has no SO_NOSIGPIPE; passing 0 makes setsockopt a harmless no-op.
+	target_compile_definitions(aemu_postoffice_client PRIVATE SO_NOSIGPIPE=0)
+endif()
 
 set(FT_REQUIRE_ZLIB OFF CACHE BOOL "" FORCE)
 set(FT_REQUIRE_BZIP2 OFF CACHE BOOL "" FORCE)

@@ -456,5 +456,7 @@ public:
 	}
 	void Clear() {}
 	bool IsInSpace(const u8 *ptr) const { return false; }
+	// Never fills up, Compile above always declines to jit.
+	size_t GetSpaceLeft() const { return 1 << 30; }
 };
 #endif

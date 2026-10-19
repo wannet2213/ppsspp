@@ -249,6 +249,10 @@ public:
 	void ThreadStart(Draw::DrawContext *draw);
 	void ThreadEnd();
 	bool ThreadFrame();  // False means it's time to exit.
+	// Like ThreadFrame(), but returns as soon as the queue is empty instead of
+	// waiting for the rest of the frame. For the browser main thread, which
+	// must not block the event loop.
+	bool ThreadFrameNonBlocking();
 	// True if ThreadFrame() has queued work and will not block on an empty queue.
 	bool HasQueuedThreadWork() {
 		std::lock_guard<std::mutex> lock(pushMutex_);

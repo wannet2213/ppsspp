@@ -5,11 +5,19 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "ext/armips/Core/Assembler.h"
-#include "ext/armips/Core/FileManager.h"
 #include "Core/Debugger/SymbolMap.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/MIPS/MIPSAsm.h"
+
+#ifdef __EMSCRIPTEN__
+// armips does not build for wasm; the debugger's assemble feature is stubbed out.
+bool MipsAssembleOpcode(std::string_view, DebugInterface *, u32, std::string *error) {
+	*error = "The built-in assembler is not available in the WebAssembly build.";
+	return false;
+}
+#else
+#include "ext/armips/Core/Assembler.h"
+#include "ext/armips/Core/FileManager.h"
 
 class PspAssemblerFile : public AssemblerFile {
 public:
@@ -78,3 +86,4 @@ bool MipsAssembleOpcode(std::string_view line, DebugInterface *cpu, u32 address,
 
 	return true;
 }
+#endif // !__EMSCRIPTEN__

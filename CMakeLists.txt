@@ -105,7 +105,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Android")
 endif()
 
 # We only support Vulkan on Unix, macOS (by MoltenVK), Android and Windows.
-if(ANDROID OR WIN32 OR (UNIX AND NOT ARM_NO_VULKAN))
+if(NOT EMSCRIPTEN AND (ANDROID OR WIN32 OR (UNIX AND NOT ARM_NO_VULKAN)))
 	set(VULKAN ON)
 endif()
 
@@ -168,6 +168,36 @@ endif()
 
 # User-editable options (go into CMakeCache.txt)
 # :: Processors
+if(EMSCRIPTEN)
+	# WebAssembly build, see Web/build.sh. The PSP CPU runs on the IR interpreter (no JIT
+	# in wasm) and rendering goes through the GLES backend on WebGL2. Threading is on
+	# (pthreads build, the server must send COOP/COEP headers for SharedArrayBuffer).
+	set(X86_DEVICE OFF)
+	set(X86_64_DEVICE OFF)
+	set(ARM_DEVICE OFF)
+	set(ARMV7_DEVICE OFF)
+	set(ARM64_DEVICE OFF)
+	set(MIPS_DEVICE OFF)
+	set(RISCV64_DEVICE OFF)
+	set(LOONGARCH64_DEVICE OFF)
+	set(USING_GLES2 ON)
+	set(USING_EGL OFF)
+	set(HTTPS_NOT_AVAILABLE ON)
+	set(USE_NO_MMAP ON)
+	set(OPENXR OFF)
+	# pthreads build: PPSSPP's internal thread pools, the audio thread and SDL3 all
+	# rely on real threads. Requires SharedArrayBuffer, which needs COOP/COEP
+	# headers AND a secure context (https or localhost) - plain-http LAN access
+	# needs WEB_PTHREADS=OFF (single-threaded fallback, runs anywhere).
+	option(WEB_PTHREADS "Build the web target with pthreads" ON)
+	if(WEB_PTHREADS)
+		add_compile_options(-pthread)
+	else()
+		# Single-threaded fallback: GLRenderManager waits run the pull inline.
+		add_compile_definitions(__EMSCRIPTEN_ST__)
+	endif()
+endif()
+
 option(ARMV7 "Set to ON if targeting an ARMv7 processor" ${ARMV7_DEVICE})
 option(ARM "Set to ON if targeting an ARM processor" ${ARM_DEVICE})
 option(MIPS "Set to ON if targeting a MIPS processor" ${MIPS_DEVICE})
@@ -278,7 +308,7 @@ endif()
 # APIs on Android, NSURLSession on macOS, and libcurl elsewhere.
 if(WIN32 OR ANDROID OR (APPLE AND NOT IOS))
 	# Nothing to do, these need no external library.
-elseif(UNIX AND NOT APPLE AND NOT LIBRETRO)
+elseif(UNIX AND NOT APPLE AND NOT LIBRETRO AND NOT EMSCRIPTEN)
 	# We only need the curl headers at build time - libcurl itself is loaded with dlopen
 	# (see ext/naett-lib/src/naett_curl.h), so it stays optional at runtime and a build made
 	# here still starts on a machine without it, just without HTTPS.
@@ -312,7 +342,7 @@ include_directories(ext/glew)
 
 if(OPENXR AND NOT ARMV7_DEVICE)
 	set(OPENGL_LIBRARIES GLESv3 EGL)
-elseif(NOT OPENGL_LIBRARIES AND USING_GLES2)
+elseif(NOT OPENGL_LIBRARIES AND USING_GLES2 AND NOT EMSCRIPTEN)
 	set(OPENGL_LIBRARIES GLESv2 EGL)
 endif()
 
@@ -321,7 +351,7 @@ if(IOS AND NOT LIBRETRO)
 	set(NO_OPENGL ON)
 endif()
 
-if(NOT OPENGL_LIBRARIES AND NOT NO_OPENGL)
+if(NOT OPENGL_LIBRARIES AND NOT NO_OPENGL AND NOT EMSCRIPTEN)
 	if(POLICY CMP0072)
 		cmake_policy(SET CMP0072 NEW)
 	endif()
@@ -349,16 +379,23 @@ if(NOT LIBRETRO AND NOT IOS AND NOT HEADLESS_CROSS AND NOT ANDROID)
 		endif()
 	endif()
 	set(SDL_LIB_TARGET SDL3::SDL3)
+	if(EMSCRIPTEN)
+		# The emscripten sdl3_ttf port ships no CMake config; activate it through its
+		# port setting instead. Fontconfig and FriBidi are unavailable on web.
+		set(SDL_TTF_LIB_TARGET "-sUSE_SDL_TTF=3")
+		message(STATUS "Using SDL3 (and SDL3_ttf) from the emscripten ports")
+	else()
 	find_package(SDL3_ttf QUIET)
 	if(NOT SDL3_ttf_FOUND)
 		if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (EXISTS "/usr/bin/apt" OR EXISTS "/usr/bin/apt-get" OR EXISTS "/etc/debian_version"))
-			message(FATAL_ERROR "SDL3_ttf not found. Install dependencies with: sudo apt install libsdl3-ttf-dev")
+			message(FATAL_ERROR "SDL3_ttf not found. Install dependencies with: sudo apt install libsdl3-dev libsdl3-ttf-dev")
 		else()
 			message(FATAL_ERROR "SDL3_ttf not found. Install SDL3_ttf development packages for your distribution and retry.")
 		endif()
 	endif()
 	set(SDL_TTF_LIB_TARGET SDL3_ttf::SDL3_ttf)
 	message(STATUS "Using SDL3 and SDL3_ttf")
+	endif()
 	add_compile_definitions(USE_SDL3_TTF)
 	find_package(Fontconfig QUIET)
 	if(Fontconfig_FOUND)
@@ -603,7 +640,7 @@ include_directories(ext/OpenXR-SDK/include)
 include_directories(ext)
 
 include_directories(Common)
-if(USING_GLES2 OR (USING_EGL AND NOT USING_FBDEV))
+if(NOT EMSCRIPTEN AND (USING_GLES2 OR (USING_EGL AND NOT USING_FBDEV)))
 	find_package(X11)
 endif()
 
@@ -1571,6 +1608,29 @@ if(TargetBin)
 	else()
 		target_link_libraries(${TargetBin} ${CMAKE_THREAD_LIBS_INIT} ${targetExtraLibs} Core)
 	endif()
+	if(EMSCRIPTEN)
+		target_link_options(${TargetBin} PRIVATE
+			"-sALLOW_MEMORY_GROWTH=1"
+			"-sINITIAL_MEMORY=536870912"
+			"-sMAXIMUM_MEMORY=4294967296"
+			"-sSTACK_SIZE=5242880"
+			"-sMIN_WEBGL_VERSION=2"
+			"-sMAX_WEBGL_VERSION=2"
+			"-sFORCE_FILESYSTEM=1"
+			"-sENVIRONMENT=web"
+			"-sMODULARIZE=1"
+			"-sEXPORT_NAME=PPSSPP"
+			"-sINVOKE_RUN=0"
+			"-sEXIT_RUNTIME=0"
+			"-sEXPORTED_RUNTIME_METHODS=['FS','callMain','ccall','UTF8ToString','stringToUTF8','HEAPU8','HEAP32','getValue','setValue']"
+			"-lidbfs.js"
+			"--preload-file=${CMAKE_SOURCE_DIR}/assets@/assets"
+		)
+		if(WEB_PTHREADS)
+			target_link_options(${TargetBin} PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=16")
+		endif()
+		set_target_properties(${TargetBin} PROPERTIES OUTPUT_NAME "ppsspp")
+	endif()
 endif()
 
 if(TargetBin)
@@ -1768,7 +1828,7 @@ if(MACOSX AND NOT IOS)
 	endif()
 endif()
 
-if(UNIX AND NOT ANDROID AND NOT APPLE)
+if(NOT EMSCRIPTEN AND (UNIX AND NOT ANDROID AND NOT APPLE))
 	configure_file(
 		"${CMAKE_SOURCE_DIR}/ppsspp.desktop.in"
 		"${CMAKE_BINARY_DIR}/ppsspp.desktop"

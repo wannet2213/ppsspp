@@ -144,7 +144,10 @@ public:
 #ifdef _WIN32
 	void FillSymbolListBox(HWND listbox, SymbolType symType);
 #endif
+#ifndef __EMSCRIPTEN__
+	// LabelDefinition comes from armips, which is not built for wasm.
 	void GetLabels(std::vector<LabelDefinition> &dest);
+#endif
 
 	// crc is optional (0 = unknown) and lets a reload of the same-named module be told apart
 	// from a different binary that just happens to share a name (common with generic module

@@ -330,6 +330,16 @@ bool CheckGLExtensions() {
 		}
 	}
 
+#ifdef __EMSCRIPTEN__
+	// The web build always requests a WebGL2 context. Emscripten exposes the
+	// GLES3 entry points directly; gl3stubInit() uses dlsym-style lookups that
+	// fail in wasm, leaving GLES3 off and selecting the GLES2 framebuffer path
+	// (whose unsized depth/stencil formats WebGL2 rejects).
+	gl_extensions.ver[0] = 3;
+	gl_extensions.ver[1] = 0;
+	gl_extensions.GLES3 = true;
+#endif
+
 	const char *extString = nullptr;
 	if (gl_extensions.ver[0] >= 3) {
 		// Let's use the new way for OpenGL 3.x+, required in the core profile.

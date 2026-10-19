@@ -152,3 +152,9 @@ RAPrefs_PPSSPP.cfg
 cmake-build-*/
 
 /.vscode/
+
+# Web (WASM) build output, local HTTPS certs, and games served over LAN
+/build-web/
+/build-web-st/
+/.certs/
+/games/

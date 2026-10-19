@@ -711,7 +711,9 @@ if(ANDROID)
 	endif()
 endif()
 
-list(APPEND CoreExtraLibs armips)
+if(NOT EMSCRIPTEN)
+	list(APPEND CoreExtraLibs armips)
+endif()
 
 target_link_libraries(Core GPU Common chdr kirk cityhash sfmt19937 xbrz xxhash rcheevos at3_standalone lua
 	aemu_postoffice_client ${CoreExtraLibs} ${CMAKE_DL_LIBS})

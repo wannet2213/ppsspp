@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdlib>
 #include <string_view>
 
 #include "Common/File/Path.h"

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ppsspp_config.h"
 #include <SDL3/SDL.h>
 
@@ -33,6 +35,14 @@ public:
 
 	bool ThreadFrame() override {
 		return renderManager_->ThreadFrame();
+	}
+
+	bool ThreadFramePending() {
+		return renderManager_->HasQueuedThreadWork();
+	}
+
+	bool ThreadFrameNonBlocking() {
+		return renderManager_->ThreadFrameNonBlocking();
 	}
 
 	void ThreadEnd() override {

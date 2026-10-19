@@ -146,6 +146,31 @@ void PathBrowser::HandlePath() {
 	}
 
 	ready_ = false;
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Single-threaded web build: list the directory right away instead of
+	// spawning the worker thread. GetListing() polls ready_, which is already
+	// set by the time it runs.
+	pendingActive_ = false;
+	pendingCancel_ = false;
+	pendingFiles_.clear();
+	pendingPath_ = path_;
+	std::vector<File::FileInfo> results;
+	if (pendingPath_.Type() == PathType::HTTP) {
+		success_ = LoadRemoteFileList(pendingPath_, userAgent_, &pendingCancel_, results);
+	} else if (pendingPath_.empty()) {
+		results.clear();
+		success_ = true;
+	} else {
+		results.clear();
+		success_ = File::GetFilesInDir(pendingPath_, &results, nullptr);
+	}
+	if (success_ && !pendingCancel_) {
+		pendingFiles_ = results;
+	}
+	pendingPath_.clear();
+	ready_ = true;
+	return;
+#endif
 	pendingActive_ = true;
 	pendingCancel_ = false;
 	pendingFiles_.clear();

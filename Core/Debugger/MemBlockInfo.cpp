@@ -764,7 +764,9 @@ void MemBlockInfoInit() {
 
 	flushThreadRunning = true;
 	flushThreadPending = false;
+#if !defined(__EMSCRIPTEN_ST__)
 	flushThread = std::thread(&FlushMemInfoThread);
+#endif
 }
 
 void MemBlockInfoShutdown() {
@@ -779,12 +781,19 @@ void MemBlockInfoShutdown() {
 	}
 
 	if (flushThreadRunning.load()) {
-		std::lock_guard<std::mutex> guard(flushLock);
 		flushThreadRunning = false;
-		flushThreadPending = true;
+#ifdef __EMSCRIPTEN_ST__
+		// No flush thread in the single-threaded web build - drain inline.
+		FlushPendingMemInfo();
+#else
+		{
+			std::lock_guard<std::mutex> guard(flushLock);
+			flushThreadPending = true;
+		}
+		flushCond.notify_one();
+		flushThread.join();
+#endif
 	}
-	flushCond.notify_one();
-	flushThread.join();
 }
 
 void MemBlockInfoDoState(PointerWrap &p) {

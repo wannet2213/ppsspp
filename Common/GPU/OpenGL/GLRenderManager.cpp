@@ -173,6 +173,40 @@ bool GLRenderManager::ThreadFrame() {
 	return true;
 }
 
+bool GLRenderManager::ThreadFrameNonBlocking() {
+	if (hitExit_) {
+		return false;
+	}
+
+	GLRRenderThreadTask *task = nullptr;
+
+	while (true) {
+		{
+			std::lock_guard<std::mutex> lock(pushMutex_);
+			if (renderThreadQueue_.empty()) {
+				return true;
+			}
+			task = renderThreadQueue_.front();
+			renderThreadQueue_.pop();
+		}
+
+		if (task->runType == GLRRunType::EXIT) {
+			VLOG("  PULL: Frame %d EXIT (%0.3f)", task->frame, time_now_d());
+			delete task;
+			hitExit_ = true;
+			return false;
+		}
+
+		VLOG("  PULL: Frame %d RUN (%0.3f)", task->frame, time_now_d());
+		bool swapRequest = Run(*task);
+		delete task;
+		if (swapRequest) {
+			break;
+		}
+	}
+	return true;
+}
+
 std::string GLRenderManager::GetGpuProfileString() const {
 	int curFrame = curFrame_;
 	const GLQueueProfileContext &profile = frameData_[curFrame].profile;
@@ -341,10 +375,21 @@ void GLRenderManager::BeginFrame(bool enableProfiling) {
 
 	frameIdGen_++;
 	{
+#ifdef __EMSCRIPTEN_ST__
+#endif
 		std::unique_lock<std::mutex> lock(frameData.fenceMutex);
 		VLOG("PUSH: BeginFrame (curFrame = %d, readyForFence = %d, time=%0.3f)", curFrame, (int)frameData.readyForFence, time_now_d());
 		while (!frameData.readyForFence) {
+#ifdef __EMSCRIPTEN_ST__
+			// Single-threaded web build: the pull "thread" is this same browser
+			// main thread, so waiting would block forever - run the queued work
+			// until our own fence is hit instead.
+			lock.unlock();
+			ThreadFrame();
+			lock.lock();
+#else
 			frameData.fenceCondVar.wait(lock);
+#endif
 		}
 		frameData.readyForFence = false;
 	}
@@ -544,7 +589,14 @@ void GLRenderManager::FlushSync() {
 		// Wait for the flush to be hit, since we're syncing.
 		while (!syncDone_) {
 			VLOG("PUSH: Waiting for frame[%d].readyForFence = 1 (sync)", curFrame_);
+#ifdef __EMSCRIPTEN_ST__
+			// Single-threaded web build: run the queued work ourselves (see BeginFrame).
+			lock.unlock();
+			ThreadFrame();
+			lock.lock();
+#else
 			syncCondVar_.wait(lock);
+#endif
 		}
 		syncDone_ = false;
 	}

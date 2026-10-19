@@ -13,6 +13,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#include <emscripten/threading.h>
 #endif // __EMSCRIPTEN__
 
 #ifdef _WIN32
@@ -312,8 +313,12 @@ void sleep_ms(int ms, const char *reason) {
 	Sleep(ms);
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(ms * 1000000);
+#elif defined(__EMSCRIPTEN__) && defined(__EMSCRIPTEN_ST__)
+	// Single-threaded web build: sleeps land on the browser main thread, where
+	// emscripten_thread_sleep busy-spins forever. requestAnimationFrame paces
+	// the loop instead.
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(ms);
+	emscripten_thread_sleep(ms);
 #else
 	usleep(ms * 1000);
 #endif
@@ -330,8 +335,11 @@ void sleep_us(int us, const char *reason) {
 	Sleep(us / 1000);
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(us * 1000);
+#elif defined(__EMSCRIPTEN__) && defined(__EMSCRIPTEN_ST__)
+	// Single-threaded web build: see sleep_ms - sleeping on the browser main
+	// thread would busy-spin forever.
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(us / 1000);
+	emscripten_thread_sleep(us / 1000);
 #else
 	usleep(us);
 #endif
@@ -387,8 +395,10 @@ void sleep_precise(double seconds, const char *reason) {
 	// On other platforms, we just do a conversion with more input precision than in sleep_ms which is restricted to whole milliseconds.
 #elif defined(HAVE_LIBNX)
 	svcSleepThread((int64_t)(seconds * 1000000000.0));
+#elif defined(__EMSCRIPTEN__) && defined(__EMSCRIPTEN_ST__)
+	// Single-threaded web build: see sleep_ms.
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(seconds * 1000.0);
+	emscripten_thread_sleep(seconds * 1000.0);
 #else
 	usleep(seconds * 1000000.0);
 #endif

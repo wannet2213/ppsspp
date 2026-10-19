@@ -1,5 +1,6 @@
 #include <vector>
 #include <cstdio>
+#include <cstdlib>
 
 #include "Common/Input/InputState.h"
 #include "Common/Input/KeyCodes.h"

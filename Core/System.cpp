@@ -775,7 +775,7 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 
 	Core_NotifyLifecycle(CoreLifecycle::STARTING);
 
-	g_loadingThread = std::thread([errorString]() {
+	auto loader = [errorString]() {
 		SetCurrentThreadName("ExecLoader");
 
 		AndroidJNIThreadContext jniContext;
@@ -830,7 +830,16 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 		}
 #endif
 		g_bootState = BootState::Complete;
-	});
+	};
+
+#ifdef __EMSCRIPTEN_ST__
+	// No pthreads in this build: run the loader inline on the browser main
+	// thread. Booting blocks the frame, but this fallback exists for LAN
+	// clients without SharedArrayBuffer.
+	loader();
+#else
+	g_loadingThread = std::thread(loader);
+#endif
 
 	return true;
 }
@@ -846,9 +855,11 @@ BootState PSP_InitUpdate(std::string *error_string) {
 
 	_dbg_assert_(bootState == BootState::Complete || bootState == BootState::Failed);
 
+#ifndef __EMSCRIPTEN_ST__
 	// Since we load on a background thread, wait for startup to complete.
 	_assert_msg_(g_loadingThread.joinable(), "bootstate: %d", (int)bootState);
 	g_loadingThread.join();
+#endif
 
 	if (bootState == BootState::Failed) {
 		// Failed! (Note: PSP_Shutdown was already called on the loader thread).

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>PPSSPP Web</title>
+<style>
+	:root {
+		color-scheme: dark;
+		--bg: #101418;
+		--panel: #1a2027;
+		--line: #2b3440;
+		--text: #d7dee6;
+		--dim: #8b98a5;
+		--accent: #3fb6ff;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; }
+	body {
+		background: var(--bg);
+		color: var(--text);
+		font: 14px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+	header {
+		width: 100%;
+		max-width: 1024px;
+		padding: 14px 20px 6px;
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+	}
+	header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+	header .sub { color: var(--dim); font-size: 12px; }
+	main { width: 100%; max-width: 1024px; padding: 0 20px 24px; }
+
+	#launcher { max-width: 640px; margin: 6vh auto 0; }
+	.panel {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		padding: 18px 20px;
+		margin-bottom: 14px;
+	}
+	.panel h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+	.panel p { margin: 0 0 10px; color: var(--dim); font-size: 12px; }
+	.panel a { color: var(--accent); word-break: break-all; }
+	#gameList { list-style: none; margin: 0; padding: 0; }
+	#gameList li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+	#gameList li:last-child { border-bottom: none; }
+	#gameList .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#gameList .size { color: var(--dim); font-size: 12px; }
+	button {
+		background: var(--accent);
+		border: none;
+		color: #04141f;
+		font-weight: 600;
+		padding: 7px 16px;
+		border-radius: 6px;
+		cursor: pointer;
+	}
+	button:hover { filter: brightness(1.1); }
+	button:disabled { opacity: .5; cursor: default; }
+	.hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+	#progressWrap { display: none; margin-top: 12px; }
+	#progressWrap .label { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+	#progressBarOuter { background: #0b0f13; border-radius: 4px; height: 8px; overflow: hidden; }
+	#progressBar { background: var(--accent); height: 100%; width: 0%; transition: width .15s; }
+	#status { min-height: 18px; color: var(--dim); font-size: 12px; }
+
+	#game { display: none; text-align: center; }
+	#canvas {
+		width: 100%;
+		max-width: 1024px;
+		aspect-ratio: 16 / 9.07;
+		background: #000;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		touch-action: none;
+	}
+	#webglWarn {
+		display: none;
+		color: #ffb454;
+		background: #2a2113;
+		border: 1px solid #55431f;
+		border-radius: 8px;
+		padding: 10px 14px;
+		margin: 12px 0;
+	}
+	a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+	<h1>PPSSPP Web</h1>
+	<div class="sub">emulator PSP di browser - WebAssembly, WebGL2 (GPU lokal), file game dari server</div>
+</header>
+<main>
+	<section id="launcher">
+		<div class="panel">
+			<h2>Daftar game di server</h2>
+			<ul id="gameList"></ul>
+			<div class="hint">File .iso/.cso/.pbp yang diletakkan di folder <code>games/</code> pada server muncul di sini. Semua proses emulasi berjalan di perangkat ini.</div>
+			<div class="hint">Renderer: WebGL2. PPSSPP upstream belum memiliki backend WebGPU.</div>
+		</div>
+		<div class="panel">
+			<h2>Atau pilih file dari perangkat</h2>
+			<input type="file" id="fileInput" accept=".iso,.cso,.pbp,.chd,.elf">
+			<div class="hint">File dimuat ke memori browser, tidak dikirim ke mana pun.</div>
+		</div>
+		<div id="progressWrap" class="panel">
+			<div class="label"><span id="progressName"></span><span id="progressPct"></span></div>
+			<div id="progressBarOuter"><div id="progressBar"></div></div>
+		</div>
+		<div id="status">Memuat aplikasi...</div>
+	</section>
+
+	<section id="game">
+		<div id="webglWarn">Browser ini tidak mendukung WebGL2. PPSSPP Web butuh WebGL2 untuk merender.</div>
+		<!-- id="canvas" is what SDL3's emscripten video driver looks up by default. -->
+		<canvas id="canvas" width="960" height="544"></canvas>
+	</section>
+</main>
+
+<!-- The right emulator build (pthread or single-threaded) is loaded by app.js
+     based on SharedArrayBuffer availability. -->
+<script src="app.js" defer></script>
+</body>
+</html>
