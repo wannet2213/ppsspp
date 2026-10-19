@@ -8,6 +8,7 @@
 #include <SDL3/SDL_mouse.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #endif
 #include "SDL/SDLJoystick.h"
 #include "SDL/SDLGLGraphicsContext.h"
@@ -1467,9 +1468,15 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			Uint64 window_flags = SDL_GetWindowFlags(window);
 			bool fullscreen = (window_flags & SDL_WINDOW_FULLSCREEN) != 0;
 
+#ifndef __EMSCRIPTEN__
+			// Web: the canvas backing store is pinned at boot (see app.js) and
+			// CSS scales the display, so g_display must keep its boot-time
+			// sizes - updating them here desyncs them from the fixed
+			// framebuffer and crops the frame.
 			System_RunOnMainThread([new_width, new_height]() {
 				Native_UpdateScreenScale(new_width, new_height, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor));
 			});
+#endif
 
 			// Set variable here in case fullscreen was toggled by hotkey
 			if (g_Config.bFullScreen != fullscreen) {
@@ -1491,6 +1498,7 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			// The window moved to a display with a different content scale, or the
 			// user changed the display's scale setting. Recompute the DPI and
 			// re-derive the screen scale from the window's current pixel size.
+#ifndef __EMSCRIPTEN__
 			UpdateScreenDPI(window);
 
 			int pixelWidth = 0;
@@ -1499,6 +1507,7 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			System_RunOnMainThread([pixelWidth, pixelHeight]() {
 				Native_UpdateScreenScale(pixelWidth, pixelHeight, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor));
 			});
+#endif
 			break;
 		}
 	case SDL_EVENT_WINDOW_MOVED:
@@ -2338,7 +2347,13 @@ int main(int argc, char *argv[]) {
 	// immediately without waiting for us to process an initial SDL resize/scale event -
 	// otherwise the first frames can render with dp_xres/dp_yres still at their defaults.
 	int initialPixelWidth = 0, initialPixelHeight = 0;
+#ifdef __EMSCRIPTEN__
+	// Web: match the pinned canvas backing store (see app.js), not the window's
+	// CSS size - the two diverge by design so the GL context never resizes.
+	emscripten_get_canvas_element_size("#canvas", &initialPixelWidth, &initialPixelHeight);
+#else
 	SDL_GetWindowSizeInPixels(window, &initialPixelWidth, &initialPixelHeight);
+#endif
 	Native_UpdateScreenScale(initialPixelWidth, initialPixelHeight, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor));
 
 	SDL_SetWindowTitle(window, (app_name_nice + " " + PPSSPP_GIT_VERSION).c_str());

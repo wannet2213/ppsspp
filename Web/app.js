@@ -48,8 +48,26 @@ function webgl2Available() {
 	}
 }
 
-function showProgress(name) {
-	$('progressWrap').style.display = 'block';
+// Pin the canvas backing store to whatever size SDL picked at boot. SDL/Emscripten
+// resizes the backing store on fullscreen and window resize events; on some
+// Chrome/ANGLE combos that leaves the GL context presenting black afterwards.
+// With a fixed backing store the context never resizes - CSS scales the display -
+// so there is nothing to get wrong.
+function pinCanvasBacking(canvas) {
+	if (canvas.__backingPinned) return;
+	const w = canvas.width || 960;
+	const h = canvas.height || 544;
+	try {
+		Object.defineProperty(canvas, 'width', { configurable: true, get: () => w, set: () => {} });
+		Object.defineProperty(canvas, 'height', { configurable: true, get: () => h, set: () => {} });
+		canvas.__backingPinned = true;
+		console.log(`Canvas backing store pinned at ${w}x${h}`);
+	} catch (err) {
+		console.warn('Could not pin canvas backing store', err);
+	}
+}
+
+function showProgress(name) {	$('progressWrap').style.display = 'block';
 	$('progressName').textContent = name;
 	$('progressPct').textContent = '';
 	$('progressBar').style.width = '0%';
@@ -208,6 +226,7 @@ function initRuntime() {
 			locateFile: (file) => (file.startsWith('ppsspp.') ? prefix + file.slice('ppsspp'.length) : file),
 		});
 		window.FS = mod.FS;
+		pinCanvasBacking($('canvas'));
 		// Persist saves and settings in IndexedDB across reloads.
 		try {
 			FS.mkdirTree('/memstick');
